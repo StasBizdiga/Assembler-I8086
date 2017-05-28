@@ -36,7 +36,7 @@ start:
 mod MACRO operand                   ;macro for calc. abs(mantissa)
     local negate, exit_mod          ;local labels for avoiding ambiguity
         
-    test operand, 1000000000000000b ;check if the first bit of 16bit mantissa is 1
+    test operand, 8000h             ;check if the first bit of 16bit mantissa is 1
     jnz negate                      ;if 1, negate the mantissa and get the 2's complement
     jmp exit_mod
         
@@ -51,7 +51,7 @@ mod ENDM
 ;------------------------------------------ 
 mov dx, offset show_mx    ;DISPLAY MESSAGES
     mov ah, 09            ;AND INPUT CHAR'S
-    int 21h
+    int 21h 
                                           
     input_macro 16          ;input Mx
     mov mx, bx 
@@ -77,9 +77,12 @@ mov dx, offset show_mx    ;DISPLAY MESSAGES
     input_macro 8           ;input Ey
     mov ey, bl
     
-;    mov mx,0000000000000011b        ;used for debugging
-;    mov my,0000000000001010b
-;              
+;    mov mx,1000000000000001b        ;used for debugging
+;    mov my,0000000000000010b
+;    mov ex,00000000b                
+;    mov ey,00000000b
+
+              
     xor ax, ax 
     xor bx, bx 
 ;------------------------------------------ 
@@ -109,24 +112,9 @@ mov dx, offset show_mx    ;DISPLAY MESSAGES
                               ;STEP 4: Multiply modulo mantissas                          
     CALL add_mantissa
 ;------------------------------------------
-                              ;STEP 5: Normalization 
-    cmp sign, 1                                      ;if sign 1, mantissa is negative
-    je inv_mantissa                                  ;thus jump to neg it back
-    jmp do_normalization_now                         ;else: skip this step
-    
-    inv_mantissa:
-    
-    neg [mz2]              ;Not sure it works right YET  =====================================
-    jnc skip_adding
-    not [mz1] 
-    jmp skeep:
-    skip_adding:
-    neg [mz1]
-    skeep:
-    
-    do_normalization_now:
-;    CALL normalization     ;not implemented   YET      ======================================
-   
+                              ;STEP 5: Normalization (we normalise the modulo then we put the sign) 
+    call normalization 
+      
 ;------------------------------------------  
                       
  xor dx,dx                         ;OUTPUTS   
@@ -135,10 +123,6 @@ mov dx, offset show_mx    ;DISPLAY MESSAGES
     mov ah, 09
     int 21h
     
-    mov ax,mz1
-    mov [mz+2],ax
-    mov ax,mz2
-    mov mz,ax
     call output_mantissa_32
     
     
@@ -162,11 +146,10 @@ input_macro MACRO size                     ;macro for user input
     xor ax, ax                             ;clear the registers
     xor bx, bx
     xor cx, cx
-    mov cx, size                           ;loop N times, as we input N bit registers
+    mov cx, size
+    mov ah, 01h                            ;loop N times, as we input N bit registers
     input:
-        mov ah, 01h
-        int 21h
-        xor ah,ah                          ;input the character
+        int 21h                            ;input the character
         sub al, 30h                        ;al keeps the ascii code of char: 30 = 0, 31 = 1
         add bl, al                         ;subtracting 30 to obtain either 0 or 1
         shl bx, 1                          ;add that  bit to the result
@@ -177,36 +160,25 @@ input_macro ENDM
 
              
 output_mantissa_32 proc
-    xor bp,bp
-    mov bp,2
-    LoopTwice:
-    dec bp
-    mov cx, 16
-    output_loop_1:  
-        cmp bp,1
-        jne leap1:
-        test mz1,1b
-        shr mz1, 1  
-        jnz output_1
-        leap1:
-        
-        cmp bp,0
-        jne leap2:
-        test mz2,1b
-        shr mz2, 1
-        jnz output_1
-        leap2:
-        
-        mov dl, 30h        ;print 0
-        jmp print
-        output_1:
-            mov dl, 31h    ;print 1        
-        print:
-        mov ah, 2          ;write char
-        int 21h        
-        loop output_loop_1
-    cmp bp,1
-    je LoopTwice 
+    mov ah, 02h
+    mov bx, mz[2]
+    mov cx, mz
+    mov si, 32
+    clc
+outputLoop:
+    test bx, 8000h
+    jnz out1
+    mov dl, 30h
+    jmp outFinal    
+out1:
+    mov dl, 31h
+outFinal:
+    int 21h
+    shl cx, 1
+    rcl bx, 1
+    dec si
+    cmp si, 0
+    jnz outputLoop 
     ret
 output_mantissa_32 endp    
 ;------------------------------------------     
@@ -235,7 +207,7 @@ calc_sign PROC                      ;procedure for checking the sign of mantissa
     xor ax, ax                             
     mov ax, mx                             
     xor ax, my                             
-    test ax, 1000000000000000b            
+    test ax, 8000h            
     jnz sign_neg                    ;if 1,the resulting mantissa is negative
     jmp sign_exit
     
@@ -246,88 +218,71 @@ calc_sign PROC                      ;procedure for checking the sign of mantissa
     RET 
 calc_sign ENDP      
 ;------------------------------------------
+                                
+normalization PROC                         ;procedure for normalizing the mantissa
+    mov cx, 32                             ;this will be used for the case when we have mantissa 0 to avoid infinite loop
+    mov ax, mz1
+    mov bx, mz2
+    mov dl, ez
+    clc
+normLoop:    
+    test ax, 8000h    
+    jnz foundOne
+    shl bx, 1
+    rcl ax, 1
+    sub dl, 1
+    loop normLoop
 
- ;    NOT WORKING YET :<                                 
-;normalization PROC                         ;procedure for normalizing the mantissa
-;    xor ax, ax                             ;clear the registers
-;    xor bx, bx
-;    xor cx, cx
-;    xor dx, dx
-;                                           ;move to ax the binary 1000000000000000b mask
-;    mov ax, 1000000000000000b              ;move to bx the binary 0100000000000000b
-;    mov bx, 0100000000000000b              ;move the mantissa to cx
-;    mov cx, mz                             ;move the exponent to dl
-;    mov dl, ez
-;    
-;    start_comparing:                       ;start by comparing the first 2 bits of mantissa
-;        test mz, ax                        ;test if first bit is 1
-;        jnz test_one                       ;if so, jump to test_one to test the second bit
-;        jmp test_two                       ;if it is 0, then jump to test_two
-;        test_one:
-;            test mz, bx                    ;test the second bit of mantissa
-;            jnz need_shift                 ;if it is 1, then go to shifting label
-;            jmp exit_normalization         ;else exit the loop
-;        
-;        test_two:                          ;test the second bit
-;            test mz, bx                    ;if it is 0, then shift
-;            jz need_shift                  ;exit otherwise
-;            jmp exit_normalization
-;        
-;        need_shift:
-;            shl cx, 1                      ;shift the mantissa one time left
-;            sub dl, 1                      ;subtract 1 from exponent 
-;            shr ax, 1                      ;shift the masks one time left
-;            shr bx, 1
-;            
-;            jmp start_comparing            ;continue looping
-;    exit_normalization:
-;   
-;    mov mz, cx                             ;store the new values in memory
-;    mov ez, dl
-;    
-;    RET
-;normalization ENDP
+foundOne:
+    shr ax, 1                              ;we shift 1 bit to the right to put the sign
+    rcr bx, 1
+    mov cl, sign
+    cmp cl, 1
+    jne normFinish
+    not ax
+    not bx
+    clc
+    add bx, 1
+    adc ax, 0
+
+normFinish:   
+    mov mz, bx
+    mov mz[2], ax
+    add dl, 1                              
+    mov ez, dl        
+    ret
+normalization ENDP
 ;==========================================
 
 
 add_mantissa PROC 
     xor ax, ax                        
-    xor bx, bx   
+    xor bx, bx
+    xor cx, cx   
     
     mov ax, mod_mx
     mov bx, mod_my 
     xor dx, dx     
-      
-    mov bp,2       ; loop "Multiply" twice because we need two pushes(16+16=32bit)  
+    mov si, 16
     
-    Multiply:
-     mov cx, 8    
-     
-    L1:
-     test al,1     ; checks if the first bit in Mx is 1 or not
-     jz short CONT  ; if 0, don't add BX to result
-     
-     add mz1,bx 
-     adc mz2,dx
-    CONT:       
-     shl dx,1
-     test bx,1000000000000000b
-     jz wwp
-     inc dx
-     wwp:                            
-     shl bx,1
- 
-     
-     
-     shr ax,1      ; shift right the Mx
-     dec cx
-     jnz short L1  
-            
-     dec bp
-     jnz Multiply 
-     
-     
-     RET      
+addLoop:
+    clc    
+    test bx, 1
+    jz dontAdd
+    add cx, ax
+    adc dx, 0   
+        
+dontAdd:
+    shr cx, 1
+    rcr dx, 1
+    shr bx, 1 
+    dec si
+    cmp si, 0
+    jne addLoop
+    
+    mov mz1, cx
+    mov mz2, dx    
+    ret      
 add_mantissa ENDP                    
 ;------------------------------------------
                  ;PRESS ANY KEY TO CONTINUE
